@@ -59,7 +59,8 @@
     // State management
     const state = {
       activeInputs: new Map(), // Map of inputs to their current state
-      currentAuthMethod: null
+      currentAuthMethod: null,
+      lastApiResponse: null // Store API responses here instead of on window.SpellChecker
     };
   
     /**
@@ -153,8 +154,12 @@
   
         const data = await response.json();
         
-        // For testing - store the last API response
-        window.SpellChecker._lastApiResponse = data;
+        // For testing - store the last API response in our state
+        state.lastApiResponse = data;
+        // Make the response available on the SpellChecker object
+        if (window.SpellChecker) {
+          window.SpellChecker._lastApiResponse = data;
+        }
         
         highlightMistakes(inputElement, data.mistakes || []);
       } catch (error) {
@@ -327,9 +332,6 @@
      * Initialize the spell checker
      */
     function init() {
-      // Initialize storage for API responses (for testing)
-      window.SpellChecker._lastApiResponse = null;
-      
       // Find and attach to all matching inputs
       document.querySelectorAll(config.inputSelector).forEach(attachSpellChecker);
       
@@ -372,14 +374,8 @@
       window.addEventListener('resize', repositionOverlays);
     }
   
-    // Initialize on DOM ready
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', init);
-    } else {
-      init();
-    }
-  
-    // Expose public API
+    // IMPORTANT: First define the SpellChecker object before calling any functions
+    // that might try to access it
     window.SpellChecker = {
       // Store for API responses (for testing)
       _lastApiResponse: null,
@@ -408,4 +404,11 @@
         Object.assign(config, newConfig);
       }
     };
+  
+    // NOW initialize the spell checker
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
   })();
