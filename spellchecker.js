@@ -13,6 +13,8 @@
       auth: {
         // Set to true to use cookie-based authentication (credentials: 'include')
         useCookies: true,
+        // Set withCredentials for XMLHttpRequest compatibility
+        withCredentials: true,
         // For token-based auth methods (not needed if using cookies)
         tokenRetrievers: {
           // Function to extract token from Cognito
@@ -53,6 +55,15 @@
       // CSS styles
       cssOverrides: {
         mistakeStyle: 'text-decoration: underline wavy red;'
+      },
+      // Debug mode to log requests
+      debug: false,
+      // CORS configuration
+      cors: {
+        // Explicitly request CORS mode
+        mode: 'cors',
+        // Always include credentials (cookies)
+        credentials: 'include'
       }
     };
   
@@ -135,20 +146,39 @@
       try {
         const headers = await prepareAuthHeaders();
         
+        // Always use include for credentials when cookies are expected
+        // This is crucial for cross-origin requests with cookies
         const fetchOptions = {
           method: 'POST',
           headers: headers,
-          body: JSON.stringify({ text })
+          body: JSON.stringify({ text }),
+          credentials: 'include', // Always use 'include' to send cookies cross-origin
+          mode: 'cors' // Explicitly set CORS mode
         };
         
-        // Include credentials if using cookie authentication
-        if (config.auth.useCookies) {
-          fetchOptions.credentials = 'include';
+        if (config.debug) {
+          console.log('Spell check request:', {
+            url: config.apiEndpoint,
+            options: {
+              ...fetchOptions,
+              headers: { ...fetchOptions.headers }
+            }
+          });
+          
+          // Debug: List all cookies
+          console.log('Document cookies:', document.cookie);
+          
+          // List cookies that would be sent with this request (SameSite compatible)
+          const cookieNames = document.cookie.split(';').map(cookie => 
+            cookie.trim().split('=')[0]
+          );
+          console.log('Cookie names available:', cookieNames);
         }
         
         const response = await fetch(config.apiEndpoint, fetchOptions);
   
         if (!response.ok) {
+          console.error(`API returned status: ${response.status}`);
           throw new Error(`API returned ${response.status}`);
         }
   
@@ -374,8 +404,7 @@
       window.addEventListener('resize', repositionOverlays);
     }
   
-    // IMPORTANT: First define the SpellChecker object before calling any functions
-    // that might try to access it
+    // Define the SpellChecker object before calling any functions
     window.SpellChecker = {
       // Store for API responses (for testing)
       _lastApiResponse: null,
@@ -402,13 +431,65 @@
         
         // Update the rest of the config
         Object.assign(config, newConfig);
+      },
+      
+      // Enable debug mode
+      enableDebug: function() {
+        config.debug = true;
+        console.log('SpellChecker debug mode enabled');
+      },
+      
+      // Test API connection
+      testConnection: async function() {
+        try {
+          const headers = await prepareAuthHeaders();
+          
+          const fetchOptions = {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ text: 'Test connection' }),
+            credentials: 'include', // Always include credentials
+            mode: 'cors' // Explicitly set CORS mode
+          };
+          
+          console.log('Testing connection with options:', {
+            url: config.apiEndpoint,
+            options: {
+              ...fetchOptions,
+              headers: { ...fetchOptions.headers }
+            }
+          });
+          
+          console.log('Document cookies:', document.cookie);
+          
+          // List cookies that would be sent with this request
+          const cookieNames = document.cookie.split(';').map(cookie => 
+            cookie.trim().split('=')[0]
+          );
+          console.log('Cookie names available:', cookieNames);
+          
+          const response = await fetch(config.apiEndpoint, fetchOptions);
+          
+          console.log('Response status:', response.status);
+          if (response.ok) {
+            const data = await response.json();
+            console.log('Connection test successful:', data);
+            return { success: true, data };
+          } else {
+            console.error('Connection test failed with status:', response.status);
+            return { success: false, status: response.status };
+          }
+        } catch (error) {
+          console.error('Connection test failed with error:', error);
+          return { success: false, error: error.message };
+        }
       }
     };
   
-    // NOW initialize the spell checker
+    // Initialize the spell checker
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', init);
     } else {
       init();
     }
-  })();
+})();
