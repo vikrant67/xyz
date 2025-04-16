@@ -1,53 +1,59 @@
 /**
- * Cross-Framework Spell Checker
+ * Cross-Framework Spell Checker with Cookie Authentication
  * This vanilla JS script can be added to any frontend to provide spell checking capabilities.
  */
 
 (function() {
     // Configuration (can be customized for each deployment)
     const config = {
-      apiEndpoint: 'https://your-api.example.com/spell-check',
+      apiEndpoint: 'http://localhost:8080/spell-check',
       debounceMs: 500,
       inputSelector: 'input[type="text"], textarea, [contenteditable="true"]',
-      authTokenRetrievers: {
-        // Function to extract token from Cognito
-        cognito: function() {
-          try {
-            // Try to get the JWT from localStorage or sessionStorage
-            return localStorage.getItem('CognitoIdentityServiceProvider.YOUR_CLIENT_ID.YOUR_USER.accessToken') ||
-                   sessionStorage.getItem('CognitoIdentityServiceProvider.YOUR_CLIENT_ID.YOUR_USER.accessToken');
-          } catch (e) {
-            console.error('Failed to retrieve Cognito token:', e);
-            return null;
-          }
-        },
-        // Function to extract token from Firebase
-        firebase: function() {
-          try {
-            // If Firebase SDK is available
-            if (window.firebase && firebase.auth) {
-              const currentUser = firebase.auth().currentUser;
-              if (currentUser) {
-                return currentUser.getIdToken(true);
-              }
+      // Authentication configuration
+      auth: {
+        // Set to true to use cookie-based authentication (credentials: 'include')
+        useCookies: true,
+        // For token-based auth methods (not needed if using cookies)
+        tokenRetrievers: {
+          // Function to extract token from Cognito
+          cognito: function() {
+            try {
+              return localStorage.getItem('CognitoIdentityServiceProvider.YOUR_CLIENT_ID.YOUR_USER.accessToken') ||
+                     sessionStorage.getItem('CognitoIdentityServiceProvider.YOUR_CLIENT_ID.YOUR_USER.accessToken');
+            } catch (e) {
+              console.error('Failed to retrieve Cognito token:', e);
+              return null;
             }
-            // Alternative: check localStorage
-            return localStorage.getItem('firebaseAuthToken');
-          } catch (e) {
-            console.error('Failed to retrieve Firebase token:', e);
-            return null;
+          },
+          // Function to extract token from Firebase
+          firebase: function() {
+            try {
+              if (window.firebase && firebase.auth) {
+                const currentUser = firebase.auth().currentUser;
+                if (currentUser) {
+                  return currentUser.getIdToken(true);
+                }
+              }
+              return localStorage.getItem('firebaseAuthToken');
+            } catch (e) {
+              console.error('Failed to retrieve Firebase token:', e);
+              return null;
+            }
           }
         },
-        // Add more auth mechanisms as needed
+        // Detect which auth method to use based on available globals or other signals
+        detectAuthMethod: function() {
+          if (window.firebase) return 'firebase';
+          if (window.AmazonCognitoIdentity || 
+              document.querySelector('[data-auth="cognito"]')) return 'cognito';
+          return null; // No token-based auth or unknown
+        }
       },
-      // Detect which auth method to use based on available globals or other signals
-      detectAuthMethod: function() {
-        if (window.firebase) return 'firebase';
-        if (window.AmazonCognitoIdentity || 
-            document.querySelector('[data-auth="cognito"]')) return 'cognito';
-        return null; // No auth or unknown
-      },
-      cssPrefix: 'spellcheck-'
+      cssPrefix: 'spellcheck-',
+      // CSS styles
+      cssOverrides: {
+        mistakeStyle: 'text-decoration: underline wavy red;'
+      }
     };
   
     // State management
@@ -72,27 +78,48 @@
     }
   
     /**
-     * Get the authentication token based on detected method
+     * Prepare authentication for API request
+     * Returns headers object with appropriate authentication
      */
-    async function getAuthToken() {
+    async function prepareAuthHeaders() {
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      
+      // If using cookies, we don't need to add auth headers
+      if (config.auth.useCookies) {
+        return headers;
+      }
+      
+      // Otherwise, try to get a token
       if (!state.currentAuthMethod) {
-        state.currentAuthMethod = config.detectAuthMethod();
+        state.currentAuthMethod = config.auth.detectAuthMethod();
       }
       
       if (!state.currentAuthMethod) {
-        console.warn('No authentication method detected');
-        return null;
+        console.warn('No token-based authentication method detected');
+        return headers;
       }
       
-      const retriever = config.authTokenRetrievers[state.currentAuthMethod];
+      const retriever = config.auth.tokenRetrievers[state.currentAuthMethod];
       if (!retriever) {
         console.error(`No token retriever for auth method: ${state.currentAuthMethod}`);
-        return null;
+        return headers;
       }
       
-      // Handle if the retriever returns a promise
-      const token = retriever();
-      return token instanceof Promise ? await token : token;
+      // Get the token
+      try {
+        const token = retriever();
+        const resolvedToken = token instanceof Promise ? await token : token;
+        
+        if (resolvedToken) {
+          headers['Authorization'] = `Bearer ${resolvedToken}`;
+        }
+      } catch (e) {
+        console.error('Error retrieving auth token:', e);
+      }
+      
+      return headers;
     }
   
     /**
@@ -105,22 +132,30 @@
       }
   
       try {
-        const token = await getAuthToken();
+        const headers = await prepareAuthHeaders();
         
-        const response = await fetch(config.apiEndpoint, {
+        const fetchOptions = {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
+          headers: headers,
           body: JSON.stringify({ text })
-        });
+        };
+        
+        // Include credentials if using cookie authentication
+        if (config.auth.useCookies) {
+          fetchOptions.credentials = 'include';
+        }
+        
+        const response = await fetch(config.apiEndpoint, fetchOptions);
   
         if (!response.ok) {
           throw new Error(`API returned ${response.status}`);
         }
   
         const data = await response.json();
+        
+        // For testing - store the last API response
+        window.SpellChecker._lastApiResponse = data;
+        
         highlightMistakes(inputElement, data.mistakes || []);
       } catch (error) {
         console.error('Spell check failed:', error);
@@ -174,8 +209,8 @@
         // Add text before the mistake
         html += text.substring(lastIndex, mistake.startIndex);
         
-        // Add the mistake with highlight
-        html += `<span class="${config.cssPrefix}mistake" style="text-decoration: underline wavy red;">${
+        // Add the mistake with highlight (using custom style if provided)
+        html += `<span class="${config.cssPrefix}mistake" style="${config.cssOverrides.mistakeStyle}">${
           text.substring(mistake.startIndex, mistake.endIndex)
         }</span>`;
         
@@ -200,9 +235,39 @@
      * Handle highlighting for contenteditable elements
      */
     function highlightContentEditableMistakes(element, mistakes) {
-      // Implementation for contenteditable elements would go here
-      // This is more complex as we need to work with the DOM nodes
-      console.log('Contenteditable spell checking not yet implemented');
+      // Clear existing highlights
+      const highlightSpans = element.querySelectorAll(`.${config.cssPrefix}mistake`);
+      highlightSpans.forEach(span => {
+        const text = document.createTextNode(span.textContent);
+        span.parentNode.replaceChild(text, span);
+      });
+      
+      if (mistakes.length === 0) return;
+      
+      // For simplicity, we'll use a basic approach that works for simple contenteditable elements
+      // A more robust implementation would use a range-based approach
+      let html = element.innerHTML;
+      const textContent = element.textContent;
+      
+      // Sort mistakes by position (descending to avoid index shifting)
+      mistakes.sort((a, b) => b.startIndex - a.startIndex);
+      
+      // Replace each mistake with a highlighted version
+      for (const mistake of mistakes) {
+        if (mistake.startIndex >= 0 && mistake.endIndex <= textContent.length) {
+          const mistakeText = textContent.substring(mistake.startIndex, mistake.endIndex);
+          
+          // Find the mistake text in the HTML and wrap it with a highlight span
+          // This is a simplified approach and may not work for complex HTML content
+          html = html.replace(
+            mistakeText,
+            `<span class="${config.cssPrefix}mistake" style="${config.cssOverrides.mistakeStyle}">${mistakeText}</span>`
+          );
+        }
+      }
+      
+      // Update the content
+      element.innerHTML = html;
     }
   
     /**
@@ -241,14 +306,6 @@
       } else {
         inputElement.addEventListener('input', handleInputChange);
       }
-      
-      // Handle positioning changes (scrolling, resizing)
-      window.addEventListener('scroll', function() {
-        repositionOverlays();
-      });
-      window.addEventListener('resize', function() {
-        repositionOverlays();
-      });
     }
   
     /**
@@ -270,6 +327,9 @@
      * Initialize the spell checker
      */
     function init() {
+      // Initialize storage for API responses (for testing)
+      window.SpellChecker._lastApiResponse = null;
+      
       // Find and attach to all matching inputs
       document.querySelectorAll(config.inputSelector).forEach(attachSpellChecker);
       
@@ -306,6 +366,10 @@
         }
       `;
       document.head.appendChild(style);
+      
+      // Handle positioning changes (scrolling, resizing)
+      window.addEventListener('scroll', repositionOverlays);
+      window.addEventListener('resize', repositionOverlays);
     }
   
     // Initialize on DOM ready
@@ -317,12 +381,30 @@
   
     // Expose public API
     window.SpellChecker = {
+      // Store for API responses (for testing)
+      _lastApiResponse: null,
+      
+      // Check a specific element
       checkElement: function(element) {
         if (!element) return;
         attachSpellChecker(element);
         handleInputChange({ target: element });
       },
+      
+      // Update configuration
       configure: function(newConfig) {
+        // Handle nested object updates
+        if (newConfig.auth) {
+          Object.assign(config.auth, newConfig.auth);
+          delete newConfig.auth; // Remove to avoid overriding the entire auth object
+        }
+        
+        if (newConfig.cssOverrides) {
+          Object.assign(config.cssOverrides, newConfig.cssOverrides);
+          delete newConfig.cssOverrides; // Remove to avoid overriding entire cssOverrides
+        }
+        
+        // Update the rest of the config
         Object.assign(config, newConfig);
       }
     };
