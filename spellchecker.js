@@ -6,7 +6,7 @@
 (function() {
     // Configuration (can be customized for each deployment)
     const config = {
-      apiEndpoint: 'http://localhost:8080/spell-check',
+      apiEndpoint: 'http://localhost:8787/api/v1/audit',
       debounceMs: 500,
       inputSelector: 'input[type="text"], textarea, [contenteditable="true"]',
       // Authentication configuration
@@ -151,7 +151,7 @@
         const fetchOptions = {
           method: 'POST',
           headers: headers,
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ "content": text, "content_type": "text" }),
           credentials: 'include', // Always use 'include' to send cookies cross-origin
           mode: 'cors' // Explicitly set CORS mode
         };
