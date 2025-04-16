@@ -6,7 +6,7 @@
 (function() {
     // Configuration (can be customized for each deployment)
     const config = {
-      apiEndpoint: 'http://localhost:3000/spell-check',
+      apiEndpoint: 'http://localhost:8080/spell-check',
       debounceMs: 500,
       inputSelector: 'input[type="text"], textarea, [contenteditable="true"]',
       // Authentication configuration
