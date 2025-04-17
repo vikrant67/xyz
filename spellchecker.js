@@ -54,7 +54,8 @@
       cssPrefix: 'spellcheck-',
       // CSS styles
       cssOverrides: {
-        mistakeStyle: 'text-decoration: underline wavy red;'
+        spellingMistakeStyle: 'text-decoration: underline wavy red;',
+        grammarMistakeStyle: 'text-decoration: underline wavy blue;'
       },
       // Debug mode to log requests
       debug: false,
@@ -135,6 +136,62 @@
     }
   
     /**
+     * Parse API response to uniform format for internal use
+     * Converts various issue formats into a consistent mistake object
+     */
+    function parseApiResponse(data) {
+      const mistakes = [];
+      
+      if (data && data.text) {
+        // Handle spelling issues
+        if (Array.isArray(data.text.spelling_issues)) {
+          data.text.spelling_issues.forEach(issue => {
+            if (issue.location) {
+              mistakes.push({
+                startIndex: issue.location.offset,
+                endIndex: issue.location.offset + issue.location.length,
+                message: issue.message,
+                suggestions: issue.suggestions || [],
+                type: 'spelling',
+                code: issue.code
+              });
+            }
+          });
+        }
+        
+        // Handle grammar issues
+        if (Array.isArray(data.text.grammar_issues)) {
+          data.text.grammar_issues.forEach(issue => {
+            if (issue.location) {
+              mistakes.push({
+                startIndex: issue.location.offset,
+                endIndex: issue.location.offset + issue.location.length,
+                message: issue.message,
+                suggestions: issue.suggestions || [],
+                type: 'grammar',
+                code: issue.code
+              });
+            }
+          });
+        }
+      }
+      
+      // Handle legacy format if needed
+      if (data && Array.isArray(data.mistakes)) {
+        data.mistakes.forEach(mistake => {
+          if (mistake.startIndex !== undefined && mistake.endIndex !== undefined) {
+            mistakes.push({
+              ...mistake,
+              type: mistake.type || 'spelling'
+            });
+          }
+        });
+      }
+      
+      return mistakes;
+    }
+  
+    /**
      * Call the spell check API
      */
     async function checkSpelling(text, inputElement) {
@@ -191,11 +248,23 @@
           window.SpellChecker._lastApiResponse = data;
         }
         
-        highlightMistakes(inputElement, data.mistakes || []);
+        // Parse the API response and get uniform mistakes format
+        const parsedMistakes = parseApiResponse(data);
+        highlightMistakes(inputElement, parsedMistakes);
       } catch (error) {
         console.error('Spell check failed:', error);
         // Optionally, provide visual feedback about the error
       }
+    }
+  
+    /**
+     * Get the style for a specific mistake type
+     */
+    function getMistakeStyle(mistakeType) {
+      if (mistakeType === 'grammar') {
+        return config.cssOverrides.grammarMistakeStyle || 'text-decoration: underline wavy blue;';
+      }
+      return config.cssOverrides.spellingMistakeStyle || 'text-decoration: underline wavy red;';
     }
   
     /**
@@ -244,8 +313,13 @@
         // Add text before the mistake
         html += text.substring(lastIndex, mistake.startIndex);
         
-        // Add the mistake with highlight (using custom style if provided)
-        html += `<span class="${config.cssPrefix}mistake" style="${config.cssOverrides.mistakeStyle}">${
+        // Get style based on mistake type
+        const style = getMistakeStyle(mistake.type);
+        
+        // Add the mistake with highlight
+        html += `<span class="${config.cssPrefix}mistake ${config.cssPrefix}${mistake.type}" 
+                    style="${style}" 
+                    title="${mistake.message || ''}">${
           text.substring(mistake.startIndex, mistake.endIndex)
         }</span>`;
         
@@ -292,11 +366,16 @@
         if (mistake.startIndex >= 0 && mistake.endIndex <= textContent.length) {
           const mistakeText = textContent.substring(mistake.startIndex, mistake.endIndex);
           
+          // Get style based on mistake type
+          const style = getMistakeStyle(mistake.type);
+          
           // Find the mistake text in the HTML and wrap it with a highlight span
           // This is a simplified approach and may not work for complex HTML content
           html = html.replace(
             mistakeText,
-            `<span class="${config.cssPrefix}mistake" style="${config.cssOverrides.mistakeStyle}">${mistakeText}</span>`
+            `<span class="${config.cssPrefix}mistake ${config.cssPrefix}${mistake.type}" 
+                   style="${style}" 
+                   title="${mistake.message || ''}">${mistakeText}</span>`
           );
         }
       }
@@ -393,8 +472,11 @@
       // Add styles
       const style = document.createElement('style');
       style.textContent = `
-        .${config.cssPrefix}mistake {
+        .${config.cssPrefix}spelling {
           text-decoration: underline wavy red;
+        }
+        .${config.cssPrefix}grammar {
+          text-decoration: underline wavy blue;
         }
       `;
       document.head.appendChild(style);
@@ -414,6 +496,39 @@
         if (!element) return;
         attachSpellChecker(element);
         handleInputChange({ target: element });
+      },
+      
+      // Process text manually without an element
+      checkText: function(text) {
+        if (!text) return Promise.resolve([]);
+        
+        return new Promise(async (resolve, reject) => {
+          try {
+            const headers = await prepareAuthHeaders();
+            
+            const fetchOptions = {
+              method: 'POST',
+              headers: headers,
+              body: JSON.stringify({ "content": text, "content_type": "text" }),
+              credentials: 'include',
+              mode: 'cors'
+            };
+            
+            const response = await fetch(config.apiEndpoint, fetchOptions);
+            
+            if (!response.ok) {
+              throw new Error(`API returned ${response.status}`);
+            }
+            
+            const data = await response.json();
+            state.lastApiResponse = data;
+            const parsedMistakes = parseApiResponse(data);
+            resolve(parsedMistakes);
+          } catch (error) {
+            console.error('Spell check failed:', error);
+            reject(error);
+          }
+        });
       },
       
       // Update configuration
@@ -447,7 +562,7 @@
           const fetchOptions = {
             method: 'POST',
             headers: headers,
-            body: JSON.stringify({ text: 'Test connection' }),
+            body: JSON.stringify({ "content": "Test connection", "content_type": "text" }),
             credentials: 'include', // Always include credentials
             mode: 'cors' // Explicitly set CORS mode
           };
