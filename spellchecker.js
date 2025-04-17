@@ -1,4 +1,292 @@
 /**
+     * Generate a unique ID for input elements that don't have one
+     */
+    function generateInputId(inputElement) {
+      const id = `spellcheck-input-${Math.random().toString(36).substring(2, 11)}`;
+      inputElement.dataset.spellcheckId = id;
+      return id;
+    }
+    
+    /**
+     * Handle clicks on mistake spans
+     */
+    function handleMistakeClick(event) {
+      event.stopPropagation();
+      
+      const mistakeSpan = event.currentTarget;
+      const rect = mistakeSpan.getBoundingClientRect();
+      
+      // Extract data from span
+      const mistakeType = mistakeSpan.dataset.mistakeType;
+      const mistakeCode = mistakeSpan.dataset.mistakeCode;
+      const mistakeText = mistakeSpan.dataset.mistakeText;
+      const mistakeMessage = mistakeSpan.dataset.mistakeMessage;
+      const suggestions = mistakeSpan.dataset.mistakeSuggestions ? 
+                           mistakeSpan.dataset.mistakeSuggestions.split(',') : [];
+      const startIndex = parseInt(mistakeSpan.dataset.mistakeStart);
+      const endIndex = parseInt(mistakeSpan.dataset.mistakeEnd);
+      const inputId = mistakeSpan.dataset.inputId;
+      
+      // Find associated input element
+      let inputElement = document.getElementById(inputId);
+      if (!inputElement) {
+        // Try to find by data attribute if id wasn't found
+        inputElement = document.querySelector(`[data-spellcheck-id="${inputId}"]`);
+      }
+      
+      // Create correction popup
+      createCorrectionPopup({
+        mistakeType,
+        mistakeCode,
+        mistakeText,
+        mistakeMessage,
+        suggestions,
+        position: {
+          left: rect.left,
+          top: rect.bottom + 5, // Position below the text
+          width: rect.width
+        },
+        onCorrect: (correction) => {
+          // Apply correction to input if we found it
+          if (inputElement) {
+            const currentValue = inputElement.value;
+            const newValue = currentValue.substring(0, startIndex) + 
+                             correction + 
+                             currentValue.substring(endIndex);
+            
+            // Update input value
+            inputElement.value = newValue;
+            
+            // Trigger input event to update UI
+            const event = new Event('input', { bubbles: true });
+            inputElement.dispatchEvent(event);
+            
+            // Focus the input and set cursor position after correction
+            inputElement.focus();
+            inputElement.setSelectionRange(startIndex + correction.length, startIndex + correction.length);
+          }
+          
+          // Close popup
+          closeCorrectionPopup();
+        },
+        onIgnore: () => {
+          // Just close the popup
+          closeCorrectionPopup();
+        }
+      });
+    }
+    
+    /**
+     * Create and display a correction popup
+     */
+    function createCorrectionPopup(options) {
+      // Close any existing popup
+      closeCorrectionPopup();
+      
+      // Create popup container
+      const popup = document.createElement('div');
+      popup.className = `${config.cssPrefix}correction-popup`;
+      popup.style.position = 'fixed';
+      popup.style.left = `${options.position.left}px`;
+      popup.style.top = `${options.position.top}px`;
+      popup.style.minWidth = '280px';
+      popup.style.maxWidth = '320px';
+      popup.style.backgroundColor = '#f8f9fa';
+      popup.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
+      popup.style.borderRadius = '8px';
+      popup.style.zIndex = '10000000';
+      popup.style.fontFamily = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      popup.style.fontSize = '14px';
+      popup.style.overflow = 'hidden';
+      
+      // Create header section
+      const header = document.createElement('div');
+      header.style.display = 'flex';
+      header.style.alignItems = 'center';
+      header.style.justifyContent = 'space-between';
+      header.style.padding = '12px 16px';
+      header.style.borderBottom = '1px solid rgba(0, 0, 0, 0.1)';
+      header.style.backgroundColor = '#f0f0f0';
+      
+      // Add icon and title
+      const headerTitle = document.createElement('div');
+      headerTitle.style.display = 'flex';
+      headerTitle.style.alignItems = 'center';
+      headerTitle.style.gap = '8px';
+      
+      // Create icon based on mistake type
+      const icon = document.createElement('span');
+      icon.style.display = 'inline-flex';
+      icon.style.alignItems = 'center';
+      icon.style.justifyContent = 'center';
+      icon.style.width = '24px';
+      icon.style.height = '24px';
+      icon.style.borderRadius = '50%';
+      icon.style.backgroundColor = '#333';
+      icon.style.color = '#fff';
+      icon.style.fontSize = '14px';
+      
+      // Depending on the mistakeType, use different icons
+      if (options.mistakeType === 'grammar') {
+        icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"></path><path d="M9 20h6"></path><path d="M12 4v16"></path></svg>';
+      } else {
+        icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>';
+      }
+      
+      const title = document.createElement('span');
+      title.textContent = options.mistakeType === 'grammar' ? 'Grammar' : 'Spelling';
+      title.style.fontWeight = 'bold';
+      
+      headerTitle.appendChild(icon);
+      headerTitle.appendChild(title);
+      
+      // Add close button
+      const closeButton = document.createElement('button');
+      closeButton.innerHTML = '&times;';
+      closeButton.style.background = 'none';
+      closeButton.style.border = 'none';
+      closeButton.style.cursor = 'pointer';
+      closeButton.style.fontSize = '20px';
+      closeButton.style.color = '#333';
+      closeButton.style.padding = '0';
+      closeButton.style.width = '24px';
+      closeButton.style.height = '24px';
+      closeButton.style.display = 'flex';
+      closeButton.style.alignItems = 'center';
+      closeButton.style.justifyContent = 'center';
+      closeButton.addEventListener('click', closeCorrectionPopup);
+      
+      header.appendChild(headerTitle);
+      header.appendChild(closeButton);
+      
+      // Create content section
+      const content = document.createElement('div');
+      content.style.padding = '16px';
+      
+      // Add error message
+      const message = document.createElement('p');
+      message.textContent = options.mistakeMessage || 'Please check this text.';
+      message.style.margin = '0 0 16px 0';
+      message.style.color = '#333';
+      content.appendChild(message);
+      
+      // Add suggestions
+      if (options.suggestions && options.suggestions.length > 0) {
+        // Create buttons for first suggestion, plus ignore button
+        const buttonsContainer = document.createElement('div');
+        buttonsContainer.style.display = 'flex';
+        buttonsContainer.style.gap = '8px';
+        
+        // Create suggestion button (first suggestion)
+        const suggestionBtn = document.createElement('button');
+        suggestionBtn.textContent = options.suggestions[0];
+        suggestionBtn.style.backgroundColor = '#4285f4';
+        suggestionBtn.style.color = 'white';
+        suggestionBtn.style.border = 'none';
+        suggestionBtn.style.borderRadius = '4px';
+        suggestionBtn.style.padding = '8px 16px';
+        suggestionBtn.style.cursor = 'pointer';
+        suggestionBtn.style.fontWeight = '500';
+        suggestionBtn.addEventListener('click', () => {
+          if (options.onCorrect) options.onCorrect(options.suggestions[0]);
+        });
+        
+        // Create ignore button
+        const ignoreBtn = document.createElement('button');
+        ignoreBtn.textContent = 'Ignore';
+        ignoreBtn.style.backgroundColor = '#f1f3f4';
+        ignoreBtn.style.color = '#333';
+        ignoreBtn.style.border = 'none';
+        ignoreBtn.style.borderRadius = '4px';
+        ignoreBtn.style.padding = '8px 16px';
+        ignoreBtn.style.cursor = 'pointer';
+        ignoreBtn.style.fontWeight = '500';
+        ignoreBtn.addEventListener('click', () => {
+          if (options.onIgnore) options.onIgnore();
+        });
+        
+        buttonsContainer.appendChild(suggestionBtn);
+        buttonsContainer.appendChild(ignoreBtn);
+        content.appendChild(buttonsContainer);
+        
+        // If there are more suggestions, add them in a separate section
+        if (options.suggestions.length > 1) {
+          const moreSuggestions = document.createElement('div');
+          moreSuggestions.style.marginTop = '12px';
+          
+          // Add a subtle divider
+          const divider = document.createElement('div');
+          divider.style.height = '1px';
+          divider.style.backgroundColor = 'rgba(0, 0, 0, 0.1)';
+          divider.style.margin = '12px 0';
+          moreSuggestions.appendChild(divider);
+          
+          // Container for additional suggestions
+          const suggestionsList = document.createElement('div');
+          suggestionsList.style.display = 'flex';
+          suggestionsList.style.gap = '8px';
+          suggestionsList.style.flexWrap = 'wrap';
+          
+          // Skip the first suggestion as it's already in the main button
+          for (let i = 1; i < Math.min(5, options.suggestions.length); i++) {
+            const chip = document.createElement('button');
+            chip.textContent = options.suggestions[i];
+            chip.style.backgroundColor = '#f1f3f4';
+            chip.style.color = '#333';
+            chip.style.border = 'none';
+            chip.style.borderRadius = '4px';
+            chip.style.padding = '6px 12px';
+            chip.style.cursor = 'pointer';
+            chip.style.fontSize = '13px';
+            chip.addEventListener('click', () => {
+              if (options.onCorrect) options.onCorrect(options.suggestions[i]);
+            });
+            suggestionsList.appendChild(chip);
+          }
+          
+          moreSuggestions.appendChild(suggestionsList);
+          content.appendChild(moreSuggestions);
+        }
+      }
+      
+      // Assemble popup
+      popup.appendChild(header);
+      popup.appendChild(content);
+      
+      // Add popup to document
+      document.body.appendChild(popup);
+      
+      // Store reference to current popup
+      window.currentCorrectionPopup = popup;
+      
+      // Add click outside to close
+      setTimeout(() => {
+        document.addEventListener('click', handleOutsideClick);
+      }, 10);
+    }
+    
+    /**
+     * Close the correction popup
+     */
+    function closeCorrectionPopup() {
+      if (window.currentCorrectionPopup) {
+        window.currentCorrectionPopup.remove();
+        window.currentCorrectionPopup = null;
+      }
+      
+      document.removeEventListener('click', handleOutsideClick);
+    }
+    
+    /**
+     * Handle clicks outside the popup to close it
+     */
+    function handleOutsideClick(event) {
+      const popup = window.currentCorrectionPopup;
+      if (popup && !popup.contains(event.target) && 
+          !event.target.classList.contains(`${config.cssPrefix}mistake`)) {
+        closeCorrectionPopup();
+      }
+    }/**
  * Cross-Framework Spell Checker with Cookie Authentication
  * This vanilla JS script can be added to any frontend to provide spell checking capabilities.
  */
@@ -296,12 +584,13 @@
       overlay.style.top = `${inputRect.top}px`;
       overlay.style.width = `${inputRect.width}px`;
       overlay.style.height = `${inputRect.height}px`;
-      overlay.style.pointerEvents = 'none'; // Make sure we can still interact with the input
+      overlay.style.pointerEvents = 'none'; // Will change this for clickable spans
       overlay.style.zIndex = '999999'; // High z-index to stay on top
       overlay.style.overflow = 'hidden';
       
       // Create the text container that will hold our highlighted text
       const textContainer = document.createElement('div');
+      textContainer.className = `${config.cssPrefix}text-container`;
       textContainer.style.position = 'absolute';
       textContainer.style.top = '0';
       textContainer.style.left = '0';
@@ -346,10 +635,19 @@
         // Get style based on mistake type
         const style = getMistakeStyle(mistake.type);
         
-        // Add the mistake with highlight
-        html += `<span class="${config.cssPrefix}mistake ${config.cssPrefix}${mistake.type}" 
-                  style="${style}" 
-                  title="${mistake.message || ''}">${
+        // Add the mistake with highlight - make it clickable with data attributes
+        html += `<span 
+                  class="${config.cssPrefix}mistake ${config.cssPrefix}${mistake.type}" 
+                  style="${style}; cursor: pointer;" 
+                  data-mistake-type="${mistake.type}"
+                  data-mistake-code="${mistake.code || ''}"
+                  data-mistake-text="${escapeHtml(text.substring(mistake.startIndex, mistake.endIndex))}"
+                  data-mistake-message="${mistake.message || ''}"
+                  data-mistake-suggestions="${(mistake.suggestions || []).join(',')}"
+                  data-mistake-start="${mistake.startIndex}"
+                  data-mistake-end="${mistake.endIndex}"
+                  data-input-id="${inputElement.id || generateInputId(inputElement)}"
+                >${
           escapeHtml(text.substring(mistake.startIndex, mistake.endIndex))
         }</span>`;
         
@@ -363,6 +661,13 @@
       textContainer.innerHTML = html;
       overlay.appendChild(textContainer);
       document.body.appendChild(overlay);
+      
+      // Enable pointer events only on mistake spans
+      const mistakeSpans = textContainer.querySelectorAll(`.${config.cssPrefix}mistake`);
+      mistakeSpans.forEach(span => {
+        span.style.pointerEvents = 'auto';
+        span.addEventListener('click', handleMistakeClick);
+      });
       
       // Store reference to the overlay
       state.activeInputs.set(inputElement, {
@@ -550,22 +855,35 @@
       style.textContent = `
         .${config.cssPrefix}spelling {
           text-decoration: underline wavy red;
+          cursor: pointer;
         }
         .${config.cssPrefix}grammar {
           text-decoration: underline wavy blue;
-        }
-        .${config.cssPrefix}input-wrapper {
-          position: relative;
-          display: inline-block;
+          cursor: pointer;
         }
         .${config.cssPrefix}overlay {
+          position: fixed;
+          pointer-events: none;
+          z-index: 999999;
+        }
+        .${config.cssPrefix}text-container {
           position: absolute;
           top: 0;
           left: 0;
           width: 100%;
           height: 100%;
-          pointer-events: none;
-          z-index: 1;
+          box-sizing: border-box;
+        }
+        .${config.cssPrefix}mistake {
+          position: relative;
+          pointer-events: auto;
+        }
+        .${config.cssPrefix}correction-popup {
+          animation: ${config.cssPrefix}fadeIn 0.2s ease-out;
+        }
+        @keyframes ${config.cssPrefix}fadeIn {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `;
       document.head.appendChild(style);
