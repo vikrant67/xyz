@@ -281,100 +281,129 @@
       clearHighlights(inputElement);
       
       if (mistakes.length === 0) return;
+
+      // APPROACH: Create a custom overlay that mimics the input position perfectly
+      // but doesn't modify the DOM structure around the input
       
-      // Approach 1: Use inline styles for input elements
-      if (inputElement.tagName === 'INPUT' || inputElement.tagName === 'TEXTAREA') {
-        // We can't add HTML inside inputs, so we'll wrap the input
-        // and apply our highlighting as a layer on top
+      const inputRect = inputElement.getBoundingClientRect();
+      const computedStyle = window.getComputedStyle(inputElement);
+      
+      // Create the overlay container
+      const overlay = document.createElement('div');
+      overlay.className = `${config.cssPrefix}overlay`;
+      overlay.style.position = 'fixed'; // Fixed position relative to viewport
+      overlay.style.left = `${inputRect.left}px`;
+      overlay.style.top = `${inputRect.top}px`;
+      overlay.style.width = `${inputRect.width}px`;
+      overlay.style.height = `${inputRect.height}px`;
+      overlay.style.pointerEvents = 'none'; // Make sure we can still interact with the input
+      overlay.style.zIndex = '999999'; // High z-index to stay on top
+      overlay.style.overflow = 'hidden';
+      
+      // Create the text container that will hold our highlighted text
+      const textContainer = document.createElement('div');
+      textContainer.style.position = 'absolute';
+      textContainer.style.top = '0';
+      textContainer.style.left = '0';
+      textContainer.style.width = '100%';
+      textContainer.style.height = '100%';
+      textContainer.style.boxSizing = 'border-box';
+      textContainer.style.fontFamily = computedStyle.fontFamily;
+      textContainer.style.fontSize = computedStyle.fontSize;
+      textContainer.style.fontWeight = computedStyle.fontWeight;
+      textContainer.style.letterSpacing = computedStyle.letterSpacing;
+      textContainer.style.lineHeight = computedStyle.lineHeight;
+      textContainer.style.whiteSpace = 'pre';
+      textContainer.style.overflow = 'hidden';
+      textContainer.style.textAlign = computedStyle.textAlign;
+      
+      // Add padding to match the input's padding
+      textContainer.style.paddingTop = computedStyle.paddingTop;
+      textContainer.style.paddingRight = computedStyle.paddingRight;
+      textContainer.style.paddingBottom = computedStyle.paddingBottom;
+      textContainer.style.paddingLeft = computedStyle.paddingLeft;
+      
+      // Add border to match the input's border (for positioning)
+      textContainer.style.borderTopWidth = computedStyle.borderTopWidth;
+      textContainer.style.borderRightWidth = computedStyle.borderRightWidth;
+      textContainer.style.borderBottomWidth = computedStyle.borderBottomWidth;
+      textContainer.style.borderLeftWidth = computedStyle.borderLeftWidth;
+      textContainer.style.borderStyle = 'solid';
+      textContainer.style.borderColor = 'transparent';
+      
+      // Create text with highlights
+      let text = inputElement.value || '';
+      let html = '';
+      let lastIndex = 0;
+      
+      // Sort mistakes by position
+      mistakes.sort((a, b) => a.startIndex - b.startIndex);
+      
+      for (const mistake of mistakes) {
+        // Add text before the mistake
+        html += escapeHtml(text.substring(lastIndex, mistake.startIndex));
         
-        // First, ensure the input has a wrapper
-        let wrapper = inputElement.parentElement;
-        if (!wrapper.classList.contains(`${config.cssPrefix}input-wrapper`)) {
-          // Create a wrapper if it doesn't exist
-          wrapper = document.createElement('div');
-          wrapper.className = `${config.cssPrefix}input-wrapper`;
-          wrapper.style.position = 'relative';
-          wrapper.style.display = 'inline-block';
-          inputElement.parentNode.insertBefore(wrapper, inputElement);
-          wrapper.appendChild(inputElement);
+        // Get style based on mistake type
+        const style = getMistakeStyle(mistake.type);
+        
+        // Add the mistake with highlight
+        html += `<span class="${config.cssPrefix}mistake ${config.cssPrefix}${mistake.type}" 
+                  style="${style}" 
+                  title="${mistake.message || ''}">${
+          escapeHtml(text.substring(mistake.startIndex, mistake.endIndex))
+        }</span>`;
+        
+        lastIndex = mistake.endIndex;
+      }
+      
+      // Add any remaining text and replace spaces with &nbsp; to maintain spacing
+      html += escapeHtml(text.substring(lastIndex));
+      
+      // Set content
+      textContainer.innerHTML = html;
+      overlay.appendChild(textContainer);
+      document.body.appendChild(overlay);
+      
+      // Store reference to the overlay
+      state.activeInputs.set(inputElement, {
+        overlay,
+        mistakes,
+        inputRect: {
+          left: inputRect.left,
+          top: inputRect.top,
+          width: inputRect.width,
+          height: inputRect.height
         }
+      });
+      
+      // Add scroll event listener to update position on scroll
+      if (!window._spellcheckScrollHandler) {
+        window._spellcheckScrollHandler = true;
+        window.addEventListener('scroll', updateFixedOverlayPositions, { passive: true });
+      }
+    }
+    
+    /**
+     * Update positions of all fixed overlays on scroll
+     */
+    function updateFixedOverlayPositions() {
+      for (const [inputElement, inputState] of state.activeInputs.entries()) {
+        if (!inputState.overlay) continue;
         
-        // Create the overlay element
-        const overlay = document.createElement('div');
-        overlay.className = `${config.cssPrefix}overlay`;
-        overlay.style.position = 'absolute';
-        overlay.style.top = '0';
-        overlay.style.left = '0';
-        overlay.style.width = '100%';
-        overlay.style.height = '100%';
-        overlay.style.pointerEvents = 'none';
-        overlay.style.zIndex = '1';
-        overlay.style.boxSizing = 'border-box';
-        overlay.style.padding = window.getComputedStyle(inputElement).padding;
+        const inputRect = inputElement.getBoundingClientRect();
         
-        // Calculate text styles to match the input
-        const computedStyle = window.getComputedStyle(inputElement);
-        const textContainer = document.createElement('div');
-        textContainer.style.position = 'absolute';
-        textContainer.style.top = '0';
-        textContainer.style.left = '0';
-        textContainer.style.width = '100%';
-        textContainer.style.height = '100%';
-        textContainer.style.fontFamily = computedStyle.fontFamily;
-        textContainer.style.fontSize = computedStyle.fontSize;
-        textContainer.style.fontWeight = computedStyle.fontWeight;
-        textContainer.style.letterSpacing = computedStyle.letterSpacing;
-        textContainer.style.textAlign = computedStyle.textAlign;
-        textContainer.style.lineHeight = computedStyle.lineHeight;
-        textContainer.style.paddingLeft = computedStyle.paddingLeft;
-        textContainer.style.paddingTop = computedStyle.paddingTop;
-        textContainer.style.paddingRight = computedStyle.paddingRight;
-        textContainer.style.paddingBottom = computedStyle.paddingBottom;
-        textContainer.style.boxSizing = 'border-box';
-        textContainer.style.overflow = 'hidden';
-        textContainer.style.whiteSpace = 'pre-wrap';
-        textContainer.style.pointerEvents = 'none'; // Make sure we can still click through
+        // Update the overlay position
+        inputState.overlay.style.left = `${inputRect.left}px`;
+        inputState.overlay.style.top = `${inputRect.top}px`;
         
-        // Create text with highlights
-        let text = inputElement.value || '';
-        let html = '';
-        let lastIndex = 0;
-        
-        // Sort mistakes by position
-        mistakes.sort((a, b) => a.startIndex - b.startIndex);
-        
-        for (const mistake of mistakes) {
-          // Add text before the mistake
-          html += escapeHtml(text.substring(lastIndex, mistake.startIndex));
-          
-          // Get style based on mistake type
-          const style = getMistakeStyle(mistake.type);
-          
-          // Add the mistake with highlight
-          html += `<span class="${config.cssPrefix}mistake ${config.cssPrefix}${mistake.type}" 
-                    style="${style}" 
-                    title="${mistake.message || ''}">${
-            escapeHtml(text.substring(mistake.startIndex, mistake.endIndex))
-          }</span>`;
-          
-          lastIndex = mistake.endIndex;
-        }
-        
-        // Add any remaining text and replace spaces with &nbsp; to maintain spacing
-        html += escapeHtml(text.substring(lastIndex));
-        
-        // Set content
-        textContainer.innerHTML = html;
-        overlay.appendChild(textContainer);
-        wrapper.appendChild(overlay);
-        
-        // Store reference to the overlay
-        state.activeInputs.set(inputElement, {
-          overlay,
-          wrapper,
-          mistakes
-        });
-      } 
+        // Store the new rect
+        inputState.inputRect = {
+          left: inputRect.left,
+          top: inputRect.top,
+          width: inputRect.width,
+          height: inputRect.height
+        };
+      }
     }
     
     /**
@@ -481,23 +510,7 @@
      * Reposition all overlays (after scroll/resize)
      */
     function repositionOverlays() {
-      // With our new approach of wrapping inputs, we don't need to reposition overlays
-      // since they're positioned relative to their parent containers.
-      // However, we might need to update the content in case the input value has changed.
-      
-      for (const [inputElement, inputState] of state.activeInputs.entries()) {
-        if (!inputState.overlay) continue;
-        
-        // If the value changes through a method other than user input
-        // (e.g., programmatic change), we'll update the overlay
-        const currentValue = inputElement.value || '';
-        const currentMistakes = inputState.mistakes || [];
-        
-        // Re-highlight the mistakes if there are any
-        if (currentMistakes.length > 0) {
-          checkSpelling(currentValue, inputElement);
-        }
-      }
+      updateFixedOverlayPositions();
     }
   
     /**
